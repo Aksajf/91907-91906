@@ -18,6 +18,11 @@ BG = (52,78,91)
 RED = (255, 50, 50)
 GREEN = (50, 255, 50)
 YELLOW = (255, 255, 50)
+CYAN = (80, 220, 220)
+PURPLE = (180, 80, 255)
+ORANGE = (255, 140, 0)
+GOLD = (255, 215, 0)
+
 
 menubutton_size= (screen_width*0.09)
 
@@ -25,6 +30,9 @@ title_font= pygame.font.Font("assets/Conflict3040-WpnRV.ttf", 160)
 font = pygame.font.SysFont("Corbel", 40)
 ui_font = pygame.font.SysFont("Corbel", 30)
 math_font = pygame.font.SysFont("Corbel", 60, bold=True)
+small_font = pygame.font.SysFont("Corbel", 24)
+wave_font = pygame.font.SysFont("Corbel", 90, bold=True)
+powerup_font = pygame.font.SysFont("Corbel", 44, bold=True)
 
 try:
     menu_background = pygame.image.load("assets/menu_bg.png")
@@ -45,9 +53,48 @@ except:
     play_img.fill((0, 255, 0))
     quit_img = pygame.Surface((menubutton_size, menubutton_size))
     quit_img.fill((0, 255, 0))
+    play_mask = pygame.mask.from_surface(play_img)
+    quit_mask = pygame.mask.from_surface(quit_img)
 
 title_surface = title_font.render("PLACEHOLDER", True, (250, 230, 214)) 
 title_rect = title_surface.get_rect(center=(screen_center_x, screen_center_y - 450)) 
+
+cell_size = 90
+grid_columns = max(3, screen_width // cell_size)
+grid_rows = max(3, screen_height // cell_size)
+player_row_minimum = max(0, grid_rows - 4)
+player_row_maximum = grid_rows - 1
+player_size = cell_size - 20
+enemy_size = cell_size-20
+boss_size = cell_size*2-10
+bullet_width = 10
+bullet_height = 20
+bullet_speed = 16
+
+wave_count = 10
+boss_wave = 10
+starting_lives = 3
+max_lives = 5
+max_escapes = 3
+invulnerability_duration= 600
+wave_intro_duration = 2000 
+
+base_fire_rate = 400
+fast_fire_rate = 150
+slow_fire_rate = 900
+multishot_duration = 6000
+
+powerup_types = ["fast_fire", "shield", "multishot", "oneup", "nuke"]
+powerup_messages = {"fast_fire": "Reward: Attack Speed Up!", "shield": "Reward: Shield!", "multishot": "Reward: MultiShot!", "oneup": "Reward: Extra Life!", "nuke": "Reward: Nuke!",}
+
+power_colours= {"fast_fire": GREEN, "shield": CYAN, "multishot": PURPLE, "oneup": RED, "nuke": ORANGE,}
+powerup_messages_duration = 2500
+
+def col_x(col):
+    return col*cell_size+cell_size//2
+
+def row_y(row):
+    return row* cell_size + cell_size//2
 
 def gen_math_question():
     operators = ["+", "-", "*"]
@@ -63,31 +110,115 @@ def gen_math_question():
         answer = a * b
     return f"{a} {operator} {b}", str(answer)
         
-        
+def wave_enemy_count(wave):
+    return 5 + (wave - 1) * 2
+ 
+def wave_enemy_speed(wave):
+    return 3.0 + (wave - 1) * 0.4
+ 
+def wave_spawn_rate(wave):
+    return max(300, 1000 - (wave - 1) * 70)
+
+def create_enemy(wave):
+    column = random.randint(0, grid_columns - 1)
+    return {"x": col_x(column), "y": float(-enemy_size), "speed": wave_enemy_speed(wave), "rect": pygame.Rect(0, 0, enemy_size, enemy_size),}
+
+def create_boss():
+    return {"x": float(col_x(grid_columns // 2)), "y": float(-boss_size),"hp": 30,"max_hp": 30, "dir": 1, "descending": True,"rect": pygame.Rect(0, 0,boss_size, boss_size),}
+
+def apply_powerup(powerup_types, current_time, game_vars):
+    if powerup_types == "fast_fire":
+        game_vars["current_fire_rate"] = fast_fire_rate
+        game_vars["buff_end_time"] = current_time + 5000
+        game_vars["fire_status"] = "Attack Speed Up!"
+        game_vars["fire_status_colour"] = GREEN
+ 
+    elif powerup_types == "shield":
+        game_vars["shield_active"] = True
+ 
+    elif powerup_types == "multishot":
+        game_vars["multishot_end_time"] = max(game_vars["multishot_end_time"], current_time) + multishot_duration
+ 
+    elif powerup_types == "oneup":
+        game_vars["lives"] = min(max_lives, game_vars["lives"] + 1)
+ 
+    elif powerup_types == "nuke":
+        for enemy in game_vars["enemies"][:]:
+            game_vars["kill_score"] += 5
+            game_vars["enemies"].remove(enemy)
+        if game_vars["boss"] is not None:
+            game_vars["boss"]["hp"] -= 8
+            if game_vars["boss"]["hp"] <= 0:
+                game_vars["kill_score"] += 100
+                game_vars["boss"] = None
+ 
+    return game_vars
+
+def draw_grid(surface):
+    for gx in range(grid_columns + 1):
+        x = gx * cell_size
+        pygame.draw.line(surface, (35, 45, 65), (x, 0), (x, screen_height), 1)
+    for gy in range(grid_rows + 1):
+        y = gy * cell_size
+        pygame.draw.line(surface, (35, 45, 65), (0, y), (screen_width, y), 1)
+
+def draw_stats_panel(surface, stats):
+    panel_x, panel_y = 20, 20
+    lives_text = ("Lives: " + "Heart " * stats["lives"]).strip() if stats["lives"] > 0 else "Lives: 0"
+    lines = [(f"Score: {stats['total_score']}", WHITE), (f"Wave: {stats['wave'] if stats['wave'] < boss_wave else 'boss'} / {wave_count}", WHITE),(f"Lives: {stats['lives']}", RED if stats["lives"] <= 1 else WHITE), (f"Escapes: {stats['escapes']} / {max_escapes}", ORANGE if stats["escapes"] > 0 else WHITE),
+    (f"Attack Speed: {stats['fire_status']}", stats["fire_status_colour"])]
+
+    active_effects = []
+    if stats["shield_active"]:
+        active_effects.append("Shield: ON")
+    if stats["current_time"] < stats["multishot_end_time"]:
+        secs_left = (stats["multishot_end_time"] - stats["current_time"]) / 1000
+        active_effects.append(f"MultiShot: {secs_left:.1f}s")
+    if active_effects:
+        lines.append((" | ".join(active_effects), CYAN))
+ 
+    for i, (text, colour) in enumerate(lines):
+        surf = ui_font.render(text, True, colour)
+        surface.blit(surf, (panel_x, panel_y + i * 34))
+
+
 def game():
     clock=pygame.time.Clock()
 
-    player_rect = pygame.Rect(screen_center_x - 25, screen_height - 100, 50, 50)
-    player_speed = 7
+    player_column = grid_columns //2
+    player_row = player_row_maximum
+    player_width = player_size
+    player_height = player_size    
+    bullets = []
+    enemies = []    
+    boss = None 
+    start_time=pygame.time.get_ticks()
+    kill_score =0
 
-    bullets=[]
-    enemies=[]
-
-    start_time = pygame.time.get_ticks()
-    kill_score = 0
-
-    enemy_spawn_timer=0
-    enemy_spawn_rate = 1500
-
-    base_fire_rate = 400
-    fast_fire_rate = 150
-    slow_fire_rate = 900
-    current_fire_rate = base_fire_rate
-
+    current_fire_rate=base_fire_rate
     last_shot_time = 0
-    buff_end_time=0
-    fire_status = "Normal"
+    buff_end_time= 0
+    fire_status ="Normal"
     fire_status_colour = WHITE
+
+    current_powerup_message = ""
+    current_powerup_colour = WHITE
+    power_message_until = 0
+    lives = starting_lives
+    escapes = 0
+    invulnerability_until = 0
+    shield_active = False
+    multishot_end_time = 0
+
+    wave=1
+    enemies_spawned_this_wave = 0
+    enemy_spawn_timer = 0
+    boss_spawned= False
+
+    state = "wave_intro" 
+    wave_intro_start = pygame.time.get_ticks()
+    total_score = 0
+    game_over_reason = ""
 
     math_question_active = False
     question_text = ""
@@ -97,182 +228,338 @@ def game():
     last_question_time = pygame.time.get_ticks()
     math_question_interval = 8000
     math_time_limit = 5000
-    game_over = False
     
     while True:
-        current_time=pygame.time.get_ticks()
-        
+        current_time = pygame.time.get_ticks()
+
         for event in pygame.event.get():
-              if event.type == pygame.QUIT:
+            if event.type == pygame.QUIT:
                 pygame.quit()
                 sys.exit()
+ 
+            if event.type == pygame.KEYDOWN:
+                if state in ("game_over", "win"):
+                    if event.key == pygame.K_ESCAPE:
+                        return
+                elif state == "playing":
+                    if event.key in (pygame.K_LEFT, pygame.K_a):
+                        player_column = max(0, player_column - 1)
+                    elif event.key in (pygame.K_RIGHT, pygame.K_d):
+                        player_column = min(grid_columns - 1, player_column + 1)
+                    elif event.key in (pygame.K_UP, pygame.K_w):
+                        player_row = max(player_row_minimum, player_row - 1)
+                    elif event.key in (pygame.K_DOWN, pygame.K_s):
+                        player_row = min(player_row_maximum, player_row + 1)
+ 
+                    if math_question_active:
+                        if event.key == pygame.K_RETURN:
+                            if player_input == correct_answer:
+                                chosen_powerup = random.choice(powerup_types)
+                                game_vars = {"current_fire_rate": current_fire_rate, "buff_end_time": buff_end_time,"fire_status": fire_status, "fire_status_colour": fire_status_colour, "shield_active": shield_active, "multishot_end_time": multishot_end_time, "lives": lives, "enemies": enemies, "boss": boss, "kill_score": kill_score,}
 
-              if event.type == pygame.KEYDOWN and math_question_active and not game_over:
-                if event.key == pygame.K_RETURN:
+                                game_vars = apply_powerup(chosen_powerup, current_time, game_vars)
+                                current_fire_rate = game_vars["current_fire_rate"]
+                                buff_end_time = game_vars["buff_end_time"]
+                                fire_status = game_vars["fire_status"]
+                                fire_status_colour = game_vars["fire_status_colour"]
+                                shield_active = game_vars["shield_active"]
+                                multishot_end_time = game_vars["multishot_end_time"]
+                                lives = game_vars["lives"]
+                                boss = game_vars["boss"]
+                                kill_score = game_vars["kill_score"]
+ 
+                                current_powerup_message = powerup_messages[chosen_powerup]
+                                current_powerup_colour = power_colours[chosen_powerup]
+                                power_message_until = current_time + powerup_messages_duration
+                            else:
+                                current_fire_rate = slow_fire_rate
+                                fire_status = "Attack Speed Down!"
+                                fire_status_colour = RED
+                                buff_end_time = current_time + 5000
+                            math_question_active = False
+                        elif event.key == pygame.K_BACKSPACE:
+                            player_input = player_input[:-1]
+                        elif event.unicode.isnumeric() or (event.unicode == "-" and len(player_input) == 0):
+                            player_input += event.unicode
 
-                    if player_input == correct_answer:
-                        current_fire_rate = fast_fire_rate
-                        fire_status=("Attack Speed up!")
-                        fire_status_colour=GREEN
-                    else:
-                        current_fire_rate = slow_fire_rate
-                        fire_status=("Attack Speed down!")
-                        fire_status_colour=RED
+        player_rect = pygame.Rect(0, 0, player_width, player_height)
+        player_rect.center = (col_x(player_column), row_y(player_row))
 
-                    buff_end_time = current_time + 5000
-                    math_question_active = False
-                elif event.key == pygame.K_BACKSPACE:
-                    player_input = player_input[:-1]
-                elif event.unicode.isnumeric() or (event.unicode == "-" and len(player_input) == 0):
-                    player_input += event.unicode
+        if state == "wave_intro":
+            if current_time - wave_intro_start > wave_intro_duration:
+                state = "playing"
+                bullets.clear()
+                enemies_spawned_this_wave = 0
+                enemy_spawn_timer = current_time
+                if wave == boss_wave:
+                    boss = create_boss()
+                    boss_spawned = True
+                else:
+                    boss = None
 
-              if event.type == pygame.KEYDOWN and game_over:
-                  if event.key == pygame.K_ESCAPE:
-                    return
-
-        if not game_over:
+        elif state == "playing":
             if current_time > buff_end_time and buff_end_time != 0:
-                current_fire_rate= base_fire_rate
+                current_fire_rate = base_fire_rate
                 fire_status = "Normal"
-                fire_status_colour= WHITE
-                buff_end_time =0
+                fire_status_colour = WHITE
+                buff_end_time = 0
 
-        if not math_question_active and current_time - last_question_time > math_question_interval:
-            question_text, correct_answer = gen_math_question()
-            player_input = ""
-            math_question_active = True
-            math_start_time = current_time
+            if not math_question_active and current_time - last_question_time > math_question_interval:
+                question_text, correct_answer = gen_math_question()
+                player_input = ""
+                math_question_active = True
+                math_start_time = current_time
 
-        if math_question_active and current_time - math_start_time > math_time_limit:
-            current_fire_rate = slow_fire_rate
-            fire_status = "Attack Speed Down!"
-            fire_status_colour=RED
-            buff_end_time = current_time + 5000
-            math_question_active = False
-            last_question_time = current_time
-
-        keys = pygame.key.get_pressed()
-        if keys[pygame.K_LEFT] or keys[pygame.K_a]:
-            player_rect.x -= player_speed
-        if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
-            player_rect.x += player_speed
-        if keys[pygame.K_UP] or keys[pygame.K_w]:
-            player_rect.y -= player_speed
-        if keys[pygame.K_DOWN] or keys[pygame.K_s]:
-            player_rect.y += player_speed
-
-        if keys[pygame.K_SPACE]:
-            if current_time - last_shot_time > current_fire_rate:
-                bullet=pygame.Rect(player_rect.centerx - 5, player_rect.top, 10, 20)
-                last_shot_time = current_time
-                bullets.append(bullet)
-                last_shot_time = current_time
-
-        if current_time - enemy_spawn_timer > enemy_spawn_rate:
-            enemy_x = random.randint(0, screen_width - 40)
-            enemy = pygame.Rect(enemy_x, - 40, 40, 40)
-            enemies.append(enemy)
-            enemy_spawn_timer=current_time
-            enemy_spawn_rate = max(500, enemy_spawn_rate-10)
-
-        for bullet in bullets[:]:
-            bullet.y -= 15
-            if bullet.bottom < 0:
-                bullets.remove(bullet)
-
-        for enemy in enemies[:]:
-            enemy.y += 5
-            if enemy.colliderect(player_rect):
-                game_over=True
-            hit=False
-            for bullet in bullets[:]:
-                if enemy.colliderect(bullet):
-                    if bullet in bullets: bullets.remove(bullet)
-                    hit = True
-                    kill_score += 5
-                    break
-            if hit:
-                if enemy in enemies: enemies.remove(enemy)
-            elif enemy.top > screen_height:
-                enemies.remove(enemy)
+            if math_question_active and current_time - math_start_time > math_time_limit:
+                current_fire_rate = slow_fire_rate
+                fire_status = "Attack Speed Down!"
+                fire_status_colour = RED
+                buff_end_time = current_time + 5000
+                math_question_active = False
+                last_question_time = current_time
             
-        time_alive = (current_time-start_time) // 1000
-        total_score = time_alive+kill_score
-                    
+            keys = pygame.key.get_pressed()
+            if keys[pygame.K_SPACE]:
+                if current_time - last_shot_time > current_fire_rate:
+                    last_shot_time = current_time
+                    fire_columns = [player_column]
+                    if current_time < multishot_end_time:
+                        fire_columns = [player_column - 1, player_column, player_column + 1]
+                    for fc in fire_columns:
+                        if 0 <= fc < grid_columns:
+                            bullet = pygame.Rect(0, 0, bullet_width, bullet_height)
+                            bullet.centerx = col_x(fc)
+                            bullet.bottom = player_rect.top
+                            bullets.append(bullet)
+            
+            if wave < boss_wave:
+                if enemies_spawned_this_wave < wave_enemy_count(wave) and \
+                        current_time - enemy_spawn_timer > wave_spawn_rate(wave):
+                    enemies.append(create_enemy(wave))
+                    enemies_spawned_this_wave += 1
+                    enemy_spawn_timer = current_time
+
+            for bullet in bullets[:]:
+                bullet.y -= bullet_speed
+                if bullet.bottom < 0:
+                    bullets.remove(bullet)
+
+            for enemy in enemies[:]:
+                enemy["y"] += enemy["speed"]
+                enemy["rect"].size = (enemy_size, enemy_size)
+                enemy["rect"].centerx = enemy["x"]
+                enemy["rect"].y = int(enemy["y"])
+ 
+                removed = False
+ 
+                if current_time >= invulnerability_until and enemy["rect"].colliderect(player_rect):
+                    kill_score += 5
+                    enemies.remove(enemy)
+                    removed = True
+                    if shield_active:
+                        shield_active = False
+                        invulnerability_until = current_time + invulnerability_duration
+                    else:
+                        lives -= 1
+                        invulnerability_until = current_time + invulnerability_duration
+                        if lives <= 0:
+                            state = "game_over"
+                            game_over_reason = "You ran out of lives!"
+
+                if not removed:
+                    for bullet in bullets[:]:
+                        if enemy["rect"].colliderect(bullet):
+                            bullets.remove(bullet)
+                            enemies.remove(enemy)
+                            kill_score += 5
+                            removed = True
+                            break
+
+                if not removed and enemy["rect"].top > screen_height:
+                    enemies.remove(enemy)
+                    if shield_active:
+                        shield_active = False
+                    else:
+                        escapes += 1
+                        if escapes >= max_escapes:
+                            state = "game_over"
+                            game_over_reason = "Too many enemies got past you!"
+
+            if boss is not None:
+                engage_row_y = row_y(3)
+                if boss["descending"]:
+                    boss["y"] += 2.0
+                    if boss["y"] >= engage_row_y - boss_size / 2:
+                        boss["descending"] = False
+                else:
+                    boss["x"] += 3.5 * boss["dir"]
+                    half = boss_size / 2
+                    if boss["x"] - half < 0:
+                        boss["x"] = half
+                        boss["dir"] = 1
+                    elif boss["x"] + half > screen_width:
+                        boss["x"] = screen_width - half
+                        boss["dir"] = -1
+ 
+                boss["rect"].size = (boss_size, boss_size)
+                boss["rect"].centerx = int(boss["x"])
+                boss["rect"].y = int(boss["y"])
+ 
+                if current_time >= invulnerability_until and boss["rect"].colliderect(player_rect):
+                    if shield_active:
+                        shield_active = False
+                        invulnerability_until = current_time + invulnerability_duration
+                    else:
+                        lives -= 1
+                        invulnerability_until = current_time + invulnerability_duration
+                        if lives <= 0:
+                            state = "game_over"
+                            game_over_reason = "The boss beat you!"
+ 
+                for bullet in bullets[:]:
+                    if boss["rect"].colliderect(bullet):
+                        bullets.remove(bullet)
+                        boss["hp"] -= 1
+                        kill_score += 2
+                        if boss["hp"] <= 0:
+                            kill_score += 100
+                            boss = None
+                            break
+            if state == "playing":
+                if wave < boss_wave:
+                    if enemies_spawned_this_wave >= wave_enemy_count(wave) and not enemies:
+                        kill_score += 20 * wave
+                        wave += 1
+                        state = "wave_intro"
+                        wave_intro_start = current_time
+                else:
+                    if boss_spawned and boss is None:
+                        state = "win"
+
+            time_alive = (current_time - start_time) // 1000
+            total_score = time_alive + kill_score
+
         screen.fill((20, 25, 40))
-
-        if not game_over:
-            pygame.draw.rect(screen, (100, 200, 255), player_rect)
-
+ 
+        if state in ("playing", "wave_intro"):
+            draw_grid(screen)
+ 
+            draw_player = True
+            if current_time < invulnerability_until:
+                draw_player = (current_time // 100) % 2 == 0
+            if draw_player:
+                colour = CYAN if shield_active else (100, 200, 255)
+                pygame.draw.rect(screen, colour, player_rect)
             for bullet in bullets:
                 pygame.draw.rect(screen, YELLOW, bullet)
-
             for enemy in enemies:
-                pygame.draw.rect(screen, RED, enemy)
-            
-        
+                pygame.draw.rect(screen, RED, enemy["rect"])
+            if boss is not None:
+                pygame.draw.rect(screen, GOLD, boss["rect"])
+                bar_width = boss_size
+                bar_x = boss["rect"].centerx - bar_width // 2
+                bar_y = boss["rect"].top - 16
+                pygame.draw.rect(screen, DARK, (bar_x, bar_y, bar_width, 10))
+                fill_w = int(bar_width * max(0, boss["hp"]) / boss["max_hp"])
+                pygame.draw.rect(screen, RED, (bar_x, bar_y, fill_w, 10))
 
-            score_text = ui_font.render(f"Score: {total_score}", True, WHITE)
-            screen.blit(score_text, (20,20))
-
-            status_text = ui_font.render(f"Attack Speed: {fire_status}", True, fire_status_colour)
-            screen.blit(status_text, (20,60))
+            stats = {"total_score": total_score, "wave": wave, "lives": lives, "escapes": escapes, "fire_status": fire_status, "fire_status_colour": fire_status_colour, "shield_active": shield_active, "multishot_end_time": multishot_end_time, "current_time": current_time}
+            draw_stats_panel(screen, stats)
 
             if math_question_active:
-                panel_rect= pygame.Rect(screen_center_x - 200, 50, 400, 150)
+                panel_rect = pygame.Rect(screen_center_x - 200, 50, 400, 150)
                 pygame.draw.rect(screen, (30, 30, 50), panel_rect)
                 pygame.draw.rect(screen, WHITE, panel_rect, 3)
-
-                q_surf = math_font.render(f"{question_text} = ?", True, WHITE)
+ 
+                q_surf = font.render(f"{question_text} = ?", True, WHITE)
                 q_rect = q_surf.get_rect(center=(screen_center_x, 90))
                 screen.blit(q_surf, q_rect)
-
+ 
                 ans_surf = math_font.render(player_input, True, YELLOW)
                 ans_rect = ans_surf.get_rect(center=(screen_center_x, 150))
                 screen.blit(ans_surf, ans_rect)
-
-                time_left = math_time_limit- ( current_time- math_start_time)
-                bar_width= int((time_left / math_time_limit) * 380)
+ 
+                time_left = math_time_limit - (current_time - math_start_time)
+                bar_width = int(max(0, time_left) / math_time_limit * 380)
                 pygame.draw.rect(screen, RED, (screen_center_x - 190, 180, bar_width, 10))
-        else:
-            game_over_text=title_font.render("GAME OVER", True, RED)
-            game_over_rect = game_over_text.get_rect(center=(screen_center_x, screen_center_y - 100))
+ 
+            if current_time < power_message_until:
+                rsurf = powerup_font.render(current_powerup_message, True, current_powerup_colour)
+                rrect = rsurf.get_rect(center=(screen_center_x, 230))
+                screen.blit(rsurf, rrect)
+
+            if state == "wave_intro":
+                overlay = pygame.Surface((screen_width, screen_height), pygame.SRCALPHA)
+                overlay.fill((0, 0, 0, 140))
+                screen.blit(overlay, (0, 0))
+                label = "BOSS WAVE" if wave == boss_wave else f"WAVE {wave}"
+                wsurf = wave_font.render(label, True, GOLD if wave == boss_wave else WHITE)
+                wrect = wsurf.get_rect(center=(screen_center_x, screen_center_y - 40))
+                screen.blit(wsurf, wrect)
+                sub = ui_font.render("Wave Starting", True, LIGHT)
+                srect = sub.get_rect(center=(screen_center_x, screen_center_y + 40))
+                screen.blit(sub, srect)
+        
+        elif state == "game_over":
+            game_over_text = title_font.render("GAME OVER", True, RED)
+            game_over_rect = game_over_text.get_rect(center=(screen_center_x, screen_center_y - 140))
             screen.blit(game_over_text, game_over_rect)
-
+ 
+            reason_surf = ui_font.render(game_over_reason, True, LIGHT)
+            reason_rect = reason_surf.get_rect(center=(screen_center_x, screen_center_y - 40))
+            screen.blit(reason_surf, reason_rect)
+ 
             final_score_text = font.render(f"Final Score: {total_score}", True, WHITE)
-            final_score_rect= final_score_text.get_rect(center=(screen_center_x, screen_center_y + 50))
+            final_score_rect = final_score_text.get_rect(center=(screen_center_x, screen_center_y + 40))
             screen.blit(final_score_text, final_score_rect)
+ 
+            wave_reached_text = font.render(f"Wave reached: {wave}", True, WHITE)
+            wave_reached_rect = wave_reached_text.get_rect(center=(screen_center_x, screen_center_y + 100))
+            screen.blit(wave_reached_text, wave_reached_rect)
+ 
+            esc_text = ui_font.render("Press esc to return to the Main Menu", True, LIGHT)
+            esc_rect = esc_text.get_rect(center=(screen_center_x, screen_center_y + 170))
+            screen.blit(esc_text, esc_rect)
 
-            esc_text= ui_font.render("Press esc to return to the Main Menu", True, LIGHT)
-            esc_rect = esc_text.get_rect(center=(screen_center_x, screen_center_y + 120))
+        elif state == "win":
+            win_text = title_font.render("YOU WIN!", True, GOLD)
+            win_rect = win_text.get_rect(center=(screen_center_x, screen_center_y - 140))
+            screen.blit(win_text, win_rect)
+ 
+            sub_surf = ui_font.render("The boss has been defeated.", True, LIGHT)
+            sub_rect = sub_surf.get_rect(center=(screen_center_x, screen_center_y - 40))
+            screen.blit(sub_surf, sub_rect)
+ 
+            final_score_text = font.render(f"Final Score: {total_score}", True, WHITE)
+            final_score_rect = final_score_text.get_rect(center=(screen_center_x, screen_center_y + 40))
+            screen.blit(final_score_text, final_score_rect)
+ 
+            esc_text = ui_font.render("Press esc to return to the Main Menu", True, LIGHT)
+            esc_rect = esc_text.get_rect(center=(screen_center_x, screen_center_y + 110))
             screen.blit(esc_text, esc_rect)
 
         pygame.display.update()
         clock.tick(60)
 
 def start_menu():
-    play_button=play_img.get_rect()
-    quit_button=quit_img.get_rect()
-
-    play_button.center = (screen_center_x - 365 , screen_center_y - (menubutton_size // 2) - 20)
+    play_button = play_img.get_rect()
+    quit_button = quit_img.get_rect()
+ 
+    play_button.center = (screen_center_x - 365, screen_center_y - (menubutton_size // 2) - 20)
     quit_button.center = (screen_center_x + 365, screen_center_y - (menubutton_size // 2) - 20)
-    
+ 
     while True:
-        screen.blit(menu_background, (0,0))
-        
+        screen.blit(menu_background, (0, 0))
         screen.blit(play_img, play_button.topleft)
         screen.blit(quit_img, quit_button.topleft)
-
-        screen.blit(title_surface,title_rect)        
+        screen.blit(title_surface, title_rect)
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
                 sys.exit()
-                
             if event.type == pygame.MOUSEBUTTONDOWN:
-                if event.button ==1:
+                if event.button == 1:
                     mouse_x, mouse_y = event.pos
-                
                     if play_button.collidepoint(mouse_x, mouse_y):
                         offset_x = mouse_x - play_button.x
                         offset_y = mouse_y - play_button.y
@@ -284,7 +571,9 @@ def start_menu():
                         if quit_mask.get_at((offset_x, offset_y)):
                             pygame.quit()
                             sys.exit()
-                    
+ 
         pygame.display.update()
-
-start_menu()
+ 
+ 
+if __name__ == "__main__":
+    start_menu()
