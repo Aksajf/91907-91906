@@ -83,11 +83,17 @@ fast_fire_rate = 150
 slow_fire_rate = 900
 multishot_duration = 6000
 
+boss_descend_speed = 0.5
+boss_side_speed = 3.0
+boss_starting_hp = 20
+
 powerup_types = ["fast_fire", "shield", "multishot", "oneup", "nuke"]
 powerup_messages = {"fast_fire": "Reward: Attack Speed Up!", "shield": "Reward: Shield!", "multishot": "Reward: MultiShot!", "oneup": "Reward: Extra Life!", "nuke": "Reward: Nuke!",}
 
 power_colours= {"fast_fire": GREEN, "shield": CYAN, "multishot": PURPLE, "oneup": RED, "nuke": ORANGE,}
 powerup_messages_duration = 2500
+
+leaderboard_file = "leaderboard.txt"
 
 def col_x(col):
     return col*cell_size+cell_size//2
@@ -96,58 +102,114 @@ def row_y(row):
     return row* cell_size + cell_size//2
 
 def is_boss_wave(wave):
+    #a boss shows up every 3rd wave so wave 3, 6 and 9 out of 9 total
     return wave % 3 == 0
 
+def load_leaderboard():
+    entries = []
+    try:
+        lb_file = open(leaderboard_file, "r")
+        for line in lb_file:
+            line = line.strip()
+            if line == "":
+                continue
+            parts = line.split(",")
+            if len(parts) == 2:
+                name = parts[0]
+                score = int(parts[1])
+                entries.append((name, score))
+        lb_file.close()
+    except FileNotFoundError:
+        entries = []
+    entries.sort(key=lambda e: e[1], reverse=True)
+    return entries[:10]
+
+def save_leaderboard_entry(name, score):
+    entries = load_leaderboard()
+    entries.append((name, score))
+    entries.sort(key=lambda e: e[1], reverse=True)
+    entries = entries[:10]
+    lb_file = open(leaderboard_file, "w")
+    for entry in entries:
+        lb_file.write(entry[0] + "," + str(entry[1]) + "\n")
+    lb_file.close()
+    return entries
+
 def gen_math_question(stage):
-    operators = ["+", "-", "*"]
-    operator = random.choice(operators)
     if stage == 1:
+        #basic arithmetic addition, subtraction, multiplication, division
+        operator = random.choice(["+", "-", "*", "/"])
         if operator == "+":
             a, b = random.randint(1, 20), random.randint(1, 20)
             answer = a + b
         elif operator =="-":
             a, b = random.randint(1, 30), random.randint(1, 10)
             answer = a - b
-        else:
+        elif operator == "*":
             a, b = random.randint(2, 9), random.randint(2, 9)
             answer = a * b
-    elif stage==2:
-        if operator == "+":
-            a, b = random.randint(10, 50), random.randint(10, 50)
-            answer = a + b
-        elif operator =="-":
-            a, b = random.randint(20, 60), random.randint(10, 30)
-            answer = a - b
         else:
-            a, b = random.randint(4, 12), random.randint(4, 12)
-            answer = a * b
+            b = random.randint(2, 10)
+            answer = random.randint(2, 10)
+            a = b * answer
+        return f"{a} {operator} {b}", str(answer)
+
+    elif stage == 2:
+        # fractions and percentages
+        kind = random.choice(["fraction", "percentage"])
+        if kind == "fraction":
+            d = random.choice([2, 3, 4, 5, 10])
+            k = random.randint(2, 10)
+            base = d * k
+            n = random.randint(1, d - 1)
+            answer = k * n
+            return f"{n}/{d} of {base}", str(answer)
+        else:
+            percent = random.choice([10, 20, 25, 50])
+            if percent == 10:
+                base = random.randint(2, 20) * 10
+            elif percent == 20:
+                base = random.randint(2, 20) * 5
+            elif percent == 25:
+                base = random.randint(2, 20) * 4
+            else:
+                base = random.randint(2, 20) * 2
+            answer = percent * base // 100
+            return f"{percent}% of {base}", str(answer)
+
     else:
-        if operator == "+":
-            a, b = random.randint(30, 99), random.randint(30, 99)
-            answer = a + b
-        elif operator =="-":
-            a, b = random.randint(50, 99), random.randint(20, 49)
-            answer = a - b
+        #exponents, powers and roots
+        kind = random.choice(["square", "cube", "sqrt", "power"])
+        if kind == "square":
+            a = random.randint(2, 15)
+            return f"{a}^2", str(a * a)
+        elif kind == "cube":
+            a = random.randint(2, 9)
+            return f"{a}^3", str(a ** 3)
+        elif kind == "sqrt":
+            r = random.randint(2, 12)
+            a = r * r
+            return f"sqrt({a})", str(r)
         else:
-            a, b = random.randint(6, 15), random.randint(6, 15)
-            answer = a * b
-    return f"{a} {operator} {b}", str(answer)
+            base = random.randint(2, 5)
+            exp = random.randint(2, 4)
+            return f"{base}^{exp}", str(base ** exp)
         
 def wave_enemy_count(wave):
-    return 5 + (wave - 1) * 2
+    return 4 + (wave - 1) * 1
  
 def wave_enemy_speed(wave):
-    return 3.0 + (wave - 1) * 0.4
+    return 2.5 + (wave - 1) * 0.2
  
 def wave_spawn_rate(wave):
-    return max(300, 1000 - (wave - 1) * 70)
+    return max(500, 1100 - (wave - 1) * 40)
 
 def create_enemy(wave):
     column = random.randint(0, grid_columns - 1)
     return {"x": col_x(column), "y": float(-enemy_size), "speed": wave_enemy_speed(wave), "rect": pygame.Rect(0, 0, enemy_size, enemy_size),}
 
 def create_boss():
-    return {"x": float(col_x(grid_columns // 2)), "y": float(-boss_size),"hp": 30,"max_hp": 30, "dir": 1, "descending": True,"rect": pygame.Rect(0, 0,boss_size, boss_size),}
+    return {"x": float(col_x(grid_columns // 2)), "y": float(-boss_size),"hp": boss_starting_hp,"max_hp": boss_starting_hp, "dir": 1,"rect": pygame.Rect(0, 0,boss_size, boss_size),}
 
 def apply_powerup(powerup_types, current_time, game_vars):
     if powerup_types == "fast_fire":
@@ -244,6 +306,9 @@ def game():
     total_score = 0
     game_over_reason = ""
 
+    name_input = ""
+    score_saved = False
+
     math_question_active = False
     question_text = ""
     correct_answer = ""
@@ -265,7 +330,17 @@ def game():
                 if state in ("game_over", "win"):
                     if event.key == pygame.K_ESCAPE:
                         return
+                    elif event.key == pygame.K_RETURN:
+                        if not score_saved:
+                            entry_name = name_input.strip() if name_input.strip() != "" else "PLAYER"
+                            save_leaderboard_entry(entry_name, total_score)
+                            score_saved = True
+                    elif event.key == pygame.K_BACKSPACE:
+                        name_input = name_input[:-1]
+                    elif event.unicode.isalnum() and len(name_input) < 12:
+                        name_input += event.unicode.upper()
                 elif state in ("playing", "wave_intro"):
+
                     if event.key in (pygame.K_LEFT, pygame.K_a):
                         player_column = max(0, player_column - 1)
                     elif event.key in (pygame.K_RIGHT, pygame.K_d):
@@ -410,20 +485,15 @@ def game():
                             game_over_reason = "Too many enemies got past you!"
 
             if boss is not None:
-                engage_row_y = row_y(3)
-                if boss["descending"]:
-                    boss["y"] += 2.0
-                    if boss["y"] >= engage_row_y - boss_size / 2:
-                        boss["descending"] = False
-                else:
-                    boss["x"] += 3.5 * boss["dir"]
-                    half = boss_size / 2
-                    if boss["x"] - half < 0:
-                        boss["x"] = half
-                        boss["dir"] = 1
-                    elif boss["x"] + half > screen_width:
-                        boss["x"] = screen_width - half
-                        boss["dir"] = -1
+                boss["y"] += boss_descend_speed
+                boss["x"] += boss_side_speed * boss["dir"]
+                half = boss_size / 2
+                if boss["x"] - half < 0:
+                    boss["x"] = half
+                    boss["dir"] = 1
+                elif boss["x"] + half > screen_width:
+                    boss["x"] = screen_width - half
+                    boss["dir"] = -1
  
                 boss["rect"].size = (boss_size, boss_size)
                 boss["rect"].centerx = int(boss["x"])
@@ -439,18 +509,22 @@ def game():
                         if lives <= 0:
                             state = "game_over"
                             game_over_reason = "The boss beat you!"
+
+                if boss is not None and boss["rect"].top > screen_height:
+                    state = "game_over"
+                    game_over_reason = "The boss got past you!"
  
-                for bullet in bullets[:]:
-                    if boss["rect"].colliderect(bullet):
-                        bullets.remove(bullet)
-                        boss["hp"] -= 1
-                        kill_score += 2
-                        if boss["hp"] <= 0:
-                            kill_score += 100
-                            boss = None
-                            math_question_active = False
-                            math_stage = min(3, math_stage + 1)
-                            break
+                if boss is not None:
+                    for bullet in bullets[:]:
+                        if boss["rect"].colliderect(bullet):
+                            bullets.remove(bullet)
+                            boss["hp"] -= 1
+                            kill_score += 2
+                            if boss["hp"] <= 0:
+                                kill_score += 100
+                                boss = None
+                                math_stage = min(3, math_stage + 1)
+                                break
             if state == "playing":
                 if not is_boss_wave(wave):
                     if enemies_spawned_this_wave >= wave_enemy_count(wave) and not enemies:
@@ -533,40 +607,64 @@ def game():
         
         elif state == "game_over":
             game_over_text = title_font.render("GAME OVER", True, RED)
-            game_over_rect = game_over_text.get_rect(center=(screen_center_x, screen_center_y - 140))
+            game_over_rect = game_over_text.get_rect(center=(screen_center_x, screen_center_y - 200))
             screen.blit(game_over_text, game_over_rect)
  
             reason_surf = ui_font.render(game_over_reason, True, LIGHT)
-            reason_rect = reason_surf.get_rect(center=(screen_center_x, screen_center_y - 40))
+            reason_rect = reason_surf.get_rect(center=(screen_center_x, screen_center_y - 100))
             screen.blit(reason_surf, reason_rect)
  
             final_score_text = font.render(f"Final Score: {total_score}", True, WHITE)
-            final_score_rect = final_score_text.get_rect(center=(screen_center_x, screen_center_y + 40))
+            final_score_rect = final_score_text.get_rect(center=(screen_center_x, screen_center_y - 40))
             screen.blit(final_score_text, final_score_rect)
  
             wave_reached_text = font.render(f"Wave reached: {wave}", True, WHITE)
-            wave_reached_rect = wave_reached_text.get_rect(center=(screen_center_x, screen_center_y + 100))
+            wave_reached_rect = wave_reached_text.get_rect(center=(screen_center_x, screen_center_y + 20))
             screen.blit(wave_reached_text, wave_reached_rect)
+
+            if not score_saved:
+                name_prompt = ui_font.render("Type your name and press ENTER to save your score:", True, LIGHT)
+                name_prompt_rect = name_prompt.get_rect(center=(screen_center_x, screen_center_y + 90))
+                screen.blit(name_prompt, name_prompt_rect)
+                name_surf = font.render(name_input + "_", True, YELLOW)
+                name_rect = name_surf.get_rect(center=(screen_center_x, screen_center_y + 140))
+                screen.blit(name_surf, name_rect)
+            else:
+                saved_text = ui_font.render("Score saved to the leaderboard!", True, GREEN)
+                saved_rect = saved_text.get_rect(center=(screen_center_x, screen_center_y + 110))
+                screen.blit(saved_text, saved_rect)
  
             esc_text = ui_font.render("Press esc to return to the Main Menu", True, LIGHT)
-            esc_rect = esc_text.get_rect(center=(screen_center_x, screen_center_y + 170))
+            esc_rect = esc_text.get_rect(center=(screen_center_x, screen_center_y + 190))
             screen.blit(esc_text, esc_rect)
 
         elif state == "win":
             win_text = title_font.render("YOU WIN!", True, GOLD)
-            win_rect = win_text.get_rect(center=(screen_center_x, screen_center_y - 140))
+            win_rect = win_text.get_rect(center=(screen_center_x, screen_center_y - 200))
             screen.blit(win_text, win_rect)
  
             sub_surf = ui_font.render("The boss has been defeated.", True, LIGHT)
-            sub_rect = sub_surf.get_rect(center=(screen_center_x, screen_center_y - 40))
+            sub_rect = sub_surf.get_rect(center=(screen_center_x, screen_center_y - 100))
             screen.blit(sub_surf, sub_rect)
  
             final_score_text = font.render(f"Final Score: {total_score}", True, WHITE)
-            final_score_rect = final_score_text.get_rect(center=(screen_center_x, screen_center_y + 40))
+            final_score_rect = final_score_text.get_rect(center=(screen_center_x, screen_center_y - 40))
             screen.blit(final_score_text, final_score_rect)
+
+            if not score_saved:
+                name_prompt = ui_font.render("Type your name and press ENTER to save your score:", True, LIGHT)
+                name_prompt_rect = name_prompt.get_rect(center=(screen_center_x, screen_center_y + 30))
+                screen.blit(name_prompt, name_prompt_rect)
+                name_surf = font.render(name_input + "_", True, YELLOW)
+                name_rect = name_surf.get_rect(center=(screen_center_x, screen_center_y + 80))
+                screen.blit(name_surf, name_rect)
+            else:
+                saved_text = ui_font.render("Score saved to the leaderboard!", True, GREEN)
+                saved_rect = saved_text.get_rect(center=(screen_center_x, screen_center_y + 50))
+                screen.blit(saved_text, saved_rect)
  
             esc_text = ui_font.render("Press esc to return to the Main Menu", True, LIGHT)
-            esc_rect = esc_text.get_rect(center=(screen_center_x, screen_center_y + 110))
+            esc_rect = esc_text.get_rect(center=(screen_center_x, screen_center_y + 130))
             screen.blit(esc_text, esc_rect)
 
         pygame.display.update()
@@ -578,32 +676,81 @@ def start_menu():
  
     play_button.center = (screen_center_x - 365, screen_center_y - (menubutton_size // 2) - 20)
     quit_button.center = (screen_center_x + 365, screen_center_y - (menubutton_size // 2) - 20)
+
+    leaderboard_button = pygame.Rect(0, 0, 320, 60)
+    leaderboard_button.center = (screen_center_x, screen_center_y + 220)
+
+    menu_state = "menu"
  
     while True:
-        screen.blit(menu_background, (0, 0))
-        screen.blit(play_img, play_button.topleft)
-        screen.blit(quit_img, quit_button.topleft)
-        screen.blit(title_surface, title_rect)
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                sys.exit()
-            if event.type == pygame.MOUSEBUTTONDOWN:
-                if event.button == 1:
-                    mouse_x, mouse_y = event.pos
-                    if play_button.collidepoint(mouse_x, mouse_y):
-                        offset_x = mouse_x - play_button.x
-                        offset_y = mouse_y - play_button.y
-                        if play_mask.get_at((offset_x, offset_y)):
-                            game()
-                    if quit_button.collidepoint(mouse_x, mouse_y):
-                        offset_x = mouse_x - quit_button.x
-                        offset_y = mouse_y - quit_button.y
-                        if quit_mask.get_at((offset_x, offset_y)):
-                            pygame.quit()
-                            sys.exit()
+        if menu_state == "menu":
+            screen.blit(menu_background, (0, 0))
+            screen.blit(play_img, play_button.topleft)
+            screen.blit(quit_img, quit_button.topleft)
+            screen.blit(title_surface, title_rect)
+
+            pygame.draw.rect(screen, (30, 30, 50), leaderboard_button)
+            pygame.draw.rect(screen, WHITE, leaderboard_button, 3)
+            lb_label = ui_font.render("LEADERBOARD", True, WHITE)
+            lb_label_rect = lb_label.get_rect(center=leaderboard_button.center)
+            screen.blit(lb_label, lb_label_rect)
+
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    sys.exit()
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    if event.button == 1:
+                        mouse_x, mouse_y = event.pos
+                        if play_button.collidepoint(mouse_x, mouse_y):
+                            offset_x = mouse_x - play_button.x
+                            offset_y = mouse_y - play_button.y
+                            if play_mask.get_at((offset_x, offset_y)):
+                                game()
+                        if quit_button.collidepoint(mouse_x, mouse_y):
+                            offset_x = mouse_x - quit_button.x
+                            offset_y = mouse_y - quit_button.y
+                            if quit_mask.get_at((offset_x, offset_y)):
+                                pygame.quit()
+                                sys.exit()
+                        if leaderboard_button.collidepoint(mouse_x, mouse_y):
+                            menu_state = "leaderboard"
  
-        pygame.display.update()
+            pygame.display.update()
+
+        elif menu_state == "leaderboard":
+            screen.fill((20, 25, 40))
+            lb_title = title_font.render("LEADERBOARD", True, GOLD)
+            lb_title_rect = lb_title.get_rect(center=(screen_center_x, 180))
+            screen.blit(lb_title, lb_title_rect)
+
+            entries = load_leaderboard()
+            start_y = 340
+            if not entries:
+                empty_text = ui_font.render("No scores yet - go set one!", True, LIGHT)
+                empty_rect = empty_text.get_rect(center=(screen_center_x, start_y))
+                screen.blit(empty_text, empty_rect)
+            else:
+                for i, entry in enumerate(entries):
+                    entry_name = entry[0]
+                    entry_score = entry[1]
+                    line_text = font.render(f"{i + 1}. {entry_name} - {entry_score}", True, WHITE)
+                    line_rect = line_text.get_rect(center=(screen_center_x, start_y + i * 50))
+                    screen.blit(line_text, line_rect)
+
+            esc_text = ui_font.render("Press esc to return to the Main Menu", True, LIGHT)
+            esc_rect = esc_text.get_rect(center=(screen_center_x, screen_height - 80))
+            screen.blit(esc_text, esc_rect)
+
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    sys.exit()
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        menu_state = "menu"
+ 
+            pygame.display.update()
  
  
 if __name__ == "__main__":
