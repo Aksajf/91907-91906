@@ -71,8 +71,7 @@ bullet_width = 10
 bullet_height = 20
 bullet_speed = 16
 
-wave_count = 10
-boss_wave = 10
+wave_count = 9
 starting_lives = 3
 max_lives = 5
 max_escapes = 3
@@ -96,18 +95,42 @@ def col_x(col):
 def row_y(row):
     return row* cell_size + cell_size//2
 
-def gen_math_question():
+def is_boss_wave(wave):
+    return wave % 3 == 0
+
+def gen_math_question(stage):
     operators = ["+", "-", "*"]
     operator = random.choice(operators)
-    if operator == "+":
-        a, b = random.randint(1, 20), random.randint(1, 20)
-        answer = a + b
-    elif operator =="-":
-        a, b = random.randint(1, 30), random.randint(1, 10)
-        answer = a - b
+    if stage == 1:
+        if operator == "+":
+            a, b = random.randint(1, 20), random.randint(1, 20)
+            answer = a + b
+        elif operator =="-":
+            a, b = random.randint(1, 30), random.randint(1, 10)
+            answer = a - b
+        else:
+            a, b = random.randint(2, 9), random.randint(2, 9)
+            answer = a * b
+    elif stage==2:
+        if operator == "+":
+            a, b = random.randint(10, 50), random.randint(10, 50)
+            answer = a + b
+        elif operator =="-":
+            a, b = random.randint(20, 60), random.randint(10, 30)
+            answer = a - b
+        else:
+            a, b = random.randint(4, 12), random.randint(4, 12)
+            answer = a * b
     else:
-        a, b = random.randint(2, 9), random.randint(2, 9)
-        answer = a * b
+        if operator == "+":
+            a, b = random.randint(30, 99), random.randint(30, 99)
+            answer = a + b
+        elif operator =="-":
+            a, b = random.randint(50, 99), random.randint(20, 49)
+            answer = a - b
+        else:
+            a, b = random.randint(6, 15), random.randint(6, 15)
+            answer = a * b
     return f"{a} {operator} {b}", str(answer)
         
 def wave_enemy_count(wave):
@@ -165,7 +188,7 @@ def draw_grid(surface):
 def draw_stats_panel(surface, stats):
     panel_x, panel_y = 20, 20
     lives_text = ("Lives: " + "Heart " * stats["lives"]).strip() if stats["lives"] > 0 else "Lives: 0"
-    lines = [(f"Score: {stats['total_score']}", WHITE), (f"Wave: {stats['wave'] if stats['wave'] < boss_wave else 'boss'} / {wave_count}", WHITE),(f"Lives: {stats['lives']}", RED if stats["lives"] <= 1 else WHITE), (f"Escapes: {stats['escapes']} / {max_escapes}", ORANGE if stats["escapes"] > 0 else WHITE),
+    lines = [(f"Score: {stats['total_score']}", WHITE), (f"Wave: {stats['wave'] if not is_boss_wave(stats['wave']) else 'boss'} / {wave_count}", WHITE),(f"Lives: {stats['lives']}", RED if stats["lives"] <= 1 else WHITE), (f"Escapes: {stats['escapes']} / {max_escapes}", ORANGE if stats["escapes"] > 0 else WHITE),
     (f"Attack Speed: {stats['fire_status']}", stats["fire_status_colour"])]
 
     active_effects = []
@@ -211,6 +234,7 @@ def game():
     multishot_end_time = 0
 
     wave=1
+    math_stage = 1
     enemies_spawned_this_wave = 0
     enemy_spawn_timer = 0
     boss_spawned= False
@@ -241,7 +265,7 @@ def game():
                 if state in ("game_over", "win"):
                     if event.key == pygame.K_ESCAPE:
                         return
-                elif state == "playing":
+                elif state in ("playing", "wave_intro"):
                     if event.key in (pygame.K_LEFT, pygame.K_a):
                         player_column = max(0, player_column - 1)
                     elif event.key in (pygame.K_RIGHT, pygame.K_d):
@@ -285,13 +309,21 @@ def game():
         player_rect = pygame.Rect(0, 0, player_width, player_height)
         player_rect.center = (col_x(player_column), row_y(player_row))
 
+        if math_question_active and current_time - math_start_time > math_time_limit:
+            current_fire_rate = slow_fire_rate
+            fire_status = "Attack Speed Down!"
+            fire_status_colour = RED
+            buff_end_time = current_time + 5000
+            math_question_active = False
+            last_question_time = current_time
+
         if state == "wave_intro":
             if current_time - wave_intro_start > wave_intro_duration:
                 state = "playing"
                 bullets.clear()
                 enemies_spawned_this_wave = 0
                 enemy_spawn_timer = current_time
-                if wave == boss_wave:
+                if is_boss_wave(wave):
                     boss = create_boss()
                     boss_spawned = True
                 else:
@@ -305,18 +337,10 @@ def game():
                 buff_end_time = 0
 
             if not math_question_active and current_time - last_question_time > math_question_interval:
-                question_text, correct_answer = gen_math_question()
+                question_text, correct_answer = gen_math_question(math_stage)
                 player_input = ""
                 math_question_active = True
                 math_start_time = current_time
-
-            if math_question_active and current_time - math_start_time > math_time_limit:
-                current_fire_rate = slow_fire_rate
-                fire_status = "Attack Speed Down!"
-                fire_status_colour = RED
-                buff_end_time = current_time + 5000
-                math_question_active = False
-                last_question_time = current_time
             
             keys = pygame.key.get_pressed()
             if keys[pygame.K_SPACE]:
@@ -332,7 +356,7 @@ def game():
                             bullet.bottom = player_rect.top
                             bullets.append(bullet)
             
-            if wave < boss_wave:
+            if not is_boss_wave(wave):
                 if enemies_spawned_this_wave < wave_enemy_count(wave) and \
                         current_time - enemy_spawn_timer > wave_spawn_rate(wave):
                     enemies.append(create_enemy(wave))
@@ -424,9 +448,11 @@ def game():
                         if boss["hp"] <= 0:
                             kill_score += 100
                             boss = None
+                            math_question_active = False
+                            math_stage = min(3, math_stage + 1)
                             break
             if state == "playing":
-                if wave < boss_wave:
+                if not is_boss_wave(wave):
                     if enemies_spawned_this_wave >= wave_enemy_count(wave) and not enemies:
                         kill_score += 20 * wave
                         wave += 1
@@ -434,7 +460,12 @@ def game():
                         wave_intro_start = current_time
                 else:
                     if boss_spawned and boss is None:
-                        state = "win"
+                        if wave >= wave_count:
+                            state = "win"
+                        else:
+                            wave += 1
+                            state = "wave_intro"
+                            wave_intro_start = current_time
 
             time_alive = (current_time - start_time) // 1000
             total_score = time_alive + kill_score
@@ -492,8 +523,8 @@ def game():
                 overlay = pygame.Surface((screen_width, screen_height), pygame.SRCALPHA)
                 overlay.fill((0, 0, 0, 140))
                 screen.blit(overlay, (0, 0))
-                label = "BOSS WAVE" if wave == boss_wave else f"WAVE {wave}"
-                wsurf = wave_font.render(label, True, GOLD if wave == boss_wave else WHITE)
+                label = "BOSS WAVE" if is_boss_wave(wave) else f"WAVE {wave}"
+                wsurf = wave_font.render(label, True, GOLD if is_boss_wave(wave) else WHITE)
                 wrect = wsurf.get_rect(center=(screen_center_x, screen_center_y - 40))
                 screen.blit(wsurf, wrect)
                 sub = ui_font.render("Wave Starting", True, LIGHT)
